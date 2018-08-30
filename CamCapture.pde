@@ -11,17 +11,27 @@ FFT fftLin;
 FFT fftLog;
 float height3;
 float height23;
-float spectrumScale = 3f;
-int cellsize = 4;
+
+int webCamCellSize = 8;
+int videoCellSize = 6;
+int cellsize = 0;
 int columns, rows;
-float ZbrightDisplace = 1;
+
+float spectrumScale = 0;
+float ZbrightDisplace = 0;
+int kickSize = 1;
+
 int freqAverages = 30;
 float rectSize = 1;
 
 int xOffset = 00;  
 int yOffset = 00; 
 int zOffset = 200; 
-int kickSize = 4;
+
+int brightnessTolerance = 100;
+int gravitySquaresFramesDuration = 10;
+
+int frameCntr;
 int  snareSize, hatSize;
 color currentColors[];
 boolean _switchToCam;
@@ -29,9 +39,14 @@ int currentInputWidth;
 int currentInputHeight;
 BeatDetect beat;
 BeatListener bl;
+PVector cameraSize;
+PVector videoSize;
+
+GravitySquare gravitySquares[];
 
 void setup() {
-  frameRate(60);
+
+  frameRate(30);
   size(1280, 720, P3D);
 
   myMovie = new Movie(this, "careto.mov");
@@ -65,9 +80,11 @@ void setup() {
 
     cam = new Capture(this, cameras[0]);
     cam.start();
+
     println(cameras[0]);
   }
 
+  InitializeVideoInputParams();
 
   // make a new beat listener, so that we won't miss any buffers for the analysis
 }
@@ -78,18 +95,8 @@ void draw() {
 
   if (_switchToCam) {
 
-    if (cam.available() == true) {
-      cam.read();
-      cam.loadPixels();
-      currentInputWidth = cam.width;
-      currentInputHeight = cam.height;
-
-      // println("columns " + columns + " rows " +rows);
-    }
-    currentColors =  cam.pixels;
+    ReadCameraColors();
   }
-  columns = currentInputWidth / cellsize;  // Calculate # of columns
-  rows = currentInputHeight / cellsize;  // Calculate # of rows
 
   fftLin.forward( song.mix );
   fftLog.forward( song.mix );
@@ -100,100 +107,132 @@ void draw() {
   // Begin loop for columns
   int lowBand = 10;
   int highBand = 15;
+
   // at least this many bands must have an onset 
   // for isRange to return true
   int numberOfOnsetsThreshold = 1;
 
   if ( beat.isRange(lowBand, highBand, numberOfOnsetsThreshold) )
   {
-    //fill(255, 0, 0, 200);
-    // rect(0, 0, (highBand-lowBand)*100, 100*lowBand);
     rectSize = kickSize;
   }
-
-  //if ( beat.isKick() ) rectSize = kickSize;
-  //if ( beat.isSnare() ) snareSize = 32;
-  //if ( beat.isHat() ) rectSize = 32;
-
-
-  //if ( beat.isOnset() ) rectSize = kickSize;
-  //if ( beat.isKick() ) rectSize = kickSize;
-  //if ( beat.isSnare() && j <= rows/3 && i<=(columns/3)*2) rectSize = 6;
-  //if ( beat.isHat() && j>(rows/3)*2) rectSize = 6;
-  //if ( beat.isSnare()) cOfsset = color(0, 100, 0);
-  // Begin loop for rows
+  int cntr = 0;
   for ( int j = 0; j < rows; j++) {
     for ( int i = 0; i < columns; i++) {
 
       int x = ( i*cellsize) ;  // x position
       int y = (j*cellsize);  // y position
-      int loc = x + y*currentInputWidth;  // Pixel array location
+      int loc = x + y*currentInputWidth;
       color c = currentColors[loc];  // Grab the color
-      c += cOfsset;
-      float percentSpectrum = ((float)j/(float)rows );
-      int soundIndexFreq =(int)(percentSpectrum*(float)fftLin.specSize());
-      //println(i+ " " +columns+" "+percentSpectrum + " "+  soundIndexFreq + "  "+fftLin.specSize() );
-      averageFreq = fftLin.getBand(soundIndexFreq);
+
       float bright = brightness(c);
-     
-      if(bright <100){
-        continue;
-      } 
-      float z = (bright*ZbrightDisplace)*(averageFreq*spectrumScale);
+      boolean draw = true;
+      if (bright <brightnessTolerance) {
+        draw = false;
+      }
+      float z = (bright*ZbrightDisplace);
       // Translate to the location, set fill and stroke, and draw the rect
-      pushMatrix();
-      translate(-x+width-xOffset, y-yOffset, z -zOffset);//likea a mirror
-      /*noFill();
-       stroke(c);*/
-      noStroke();
-      fill(c);
 
-      /*beginShape();
-       vertex(-cellsize/2, -cellsize/2);
-       vertex(-cellsize/2, cellsize/2);
-       vertex(cellsize/2, cellsize/2);
-       vertex(cellsize/2, -cellsize/2);
-       endShape(CLOSE);*/
-
-      //ellipseMode(CENTER);
-      //ellipse(cellsize*rectSize, cellsize*.9f*rectSize, cellsize*rectSize, cellsize*rectSize);
-      //rectMode(CENTER);
-      rect(0, 0, cellsize*rectSize, cellsize*rectSize);
-      popMatrix();
+      PVector position = new PVector(-x+width-xOffset, y-yOffset, z -zOffset);
+      PVector size = new PVector(cellsize*rectSize, cellsize*rectSize);
+      GravitySquare gSquare = gravitySquares[cntr];
+      gSquare.DrawRect(size, c, draw, position);
+      cntr++;
     }
   }
+  FramesCicleCheck();
 }
+
+void FramesCicleCheck() {
+  frameCntr++;
+  if (frameCntr>= gravitySquaresFramesDuration) {
+    println("ENDCICLE");
+    frameCntr = 0;
+  }
+} 
 // Called every time a new frame is available to read
 void movieEvent(Movie m) {
   m.read();
   m.loadPixels();
-
-  currentInputWidth = m.width;
-  currentInputHeight = m.height;
-  xOffset = (width/2) -(currentInputWidth/2);
-  yOffset = -(height/2) + (currentInputHeight/2);
+  if (cameraSize == null) videoSize = new PVector(m.width, m.height);
   currentColors = m.pixels;
 }
 void keyPressed() {
   if (key == ' ') {
 
     myMovie.stop();
-    currentColors =  cam.pixels;
-    _switchToCam = true;
-    yOffset = 0;
-    xOffset = 0;
-    cellsize = 6;
-    zOffset = 800;
+    InitializeWebCamParams();
   }
   if (key == 'a') {
 
     myMovie.play();
-    _switchToCam = false;
-    cellsize = 1;
-    zOffset = 200;
+    InitializeVideoInputParams();
   }
   if (key == 'b') {
     song.rewind();
     song.play();
   }
+}
+
+void InitializeWebCamParams() {
+
+  currentColors =  cam.pixels;
+  _switchToCam = true;
+  yOffset = 0;
+  xOffset = 0;
+  cellsize = webCamCellSize;
+  zOffset = 800;
+
+  GetInputRowsColumns();
+
+  FillGravitySquares();
+}
+void InitializeVideoInputParams() {
+
+  _switchToCam = false;
+  cellsize = videoCellSize;
+  zOffset = 200;
+  currentInputWidth =(int) videoSize.x;
+  currentInputHeight =(int) videoSize.y;
+  xOffset = (width/2) -(currentInputWidth/2);
+  yOffset = -(height/2) + (currentInputHeight/2);
+
+  GetInputRowsColumns();
+
+  FillGravitySquares();
+}
+void GetInputRowsColumns() {
+
+  columns = currentInputWidth / cellsize;  // Calculate # of columns
+  rows = currentInputHeight / cellsize;  // Calculate # of rows
+}
+
+void FillGravitySquares() {
+
+  int totalInputShapes = rows*columns;
+  gravitySquares  = null;
+  gravitySquares = new GravitySquare[totalInputShapes];
+  int cntr =0;
+
+  for ( int j = 0; j < rows; j++) {
+    for ( int i = 0; i < columns; i++) {
+
+      gravitySquares[cntr] = new GravitySquare(false, true);
+      cntr++;
+    }
+  }
+}
+
+void ReadCameraColors() {
+
+  if (cam.available() == true) {
+    cam.read();
+    cam.loadPixels();
+
+    if (cameraSize == null) cameraSize = new PVector(cam.width, cam.height);
+
+    currentInputWidth = (int)cameraSize.x;
+    currentInputHeight =(int) cameraSize.y;
+  }
+  currentColors =  cam.pixels;
 }
