@@ -2,33 +2,36 @@ import processing.video.*;
 import ddf.minim.analysis.*;
 import ddf.minim.*;
 
-Movie myMovie;
-Capture cam;
-Minim minim;  
 
-int webCamCellSize = 8;
+Movie myMovie;
+String movieName = "careto.mov";
+Capture cam;
+Minim minim;
+AudioPlayer song;
+String songName = "saintmotel2.mp3";
+FFT fft;  
+
+int webCamCellSize = 4;
 int videoCellSize = 6;
 int cellsize = 0;
 int columns, rows;
 
 float spectrumScale = 0;
-float ZbrightDisplace = 0;
-int kickSize = 1;
-
+float ZbrightDisplace = 1;
+float zMusicDisplace = 1f;
+float mutualDisplace = 1;
 int freqAverages = 30;
 float rectSize = 1;
 
 int xOffset = 00;  
 int yOffset = 00; 
-int zOffset = 200; 
+int zOffset = 400; 
 
 int brightnessTolerance = 100;
-int gravitySquaresFramesDuration = 10;
 
-int frameCntr;
 int  snareSize, hatSize;
 color currentColors[];
-boolean _switchToCam;
+boolean _switchToCam = false;
 int currentInputWidth;
 int currentInputHeight;
 BeatDetect beat;
@@ -37,13 +40,18 @@ PVector cameraSize= null;
 PVector videoSize = null;
 
 GravitySquare gravitySquares[];
+boolean _groupPixels; 
+boolean _animatingRegroup;
+float regroupSpeed = 0.1f;
+float maxZDisplace = 2;
 
 void setup() {
 
   frameRate(30);
   size(1280, 720, P3D);
   InitializeVideoInputParams();
-  myMovie = new Movie(this, "careto.mov");
+  InitializeMusic();
+  myMovie = new Movie(this, movieName);
   myMovie.loop();
 
   String[] cameras = Capture.list();
@@ -54,12 +62,15 @@ void setup() {
 
     cam = new Capture(this, cameras[0]);
     cam.start();
+    if (_switchToCam)InitializeWebCamParams(); 
 
     println(cameras[0]);
   }
 }
 
-void draw() {
+void draw() 
+{
+  if (!cam.available()) return;
 
   background(0);
 
@@ -68,7 +79,7 @@ void draw() {
     ReadCameraColors();
   }
   rectSize = 1;
-
+  fft.forward(song.mix);
   int cntr = 0;
   for ( int j = 0; j < rows; j++) {
     for ( int i = 0; i < columns; i++) {
@@ -83,8 +94,9 @@ void draw() {
       if (bright <brightnessTolerance) {
         draw = false;
       }
-      float z = (bright*ZbrightDisplace);
-      // Translate to the location, set fill and stroke, and draw the rect
+      float brightFactor =(bright*ZbrightDisplace);
+      float musicFactor = (fft.getAvg(j)*zMusicDisplace);
+      float z = (musicFactor*brightFactor)*mutualDisplace;
 
       PVector position = new PVector(-x+width-xOffset, y-yOffset, z -zOffset);
       PVector size = new PVector(cellsize*rectSize, cellsize*rectSize);
@@ -93,16 +105,34 @@ void draw() {
       cntr++;
     }
   }
-  FramesCicleCheck();
+
+  CheckForAnimationPixels();
+}
+void CheckForAnimationPixels() {
+
+  if (_animatingRegroup)
+  {
+    if (_groupPixels) 
+    { 
+      mutualDisplace -=regroupSpeed;
+      if (mutualDisplace<0.1f)
+      {
+        _animatingRegroup = false;
+        mutualDisplace = 0.1f;
+      }
+    } else 
+    {
+      mutualDisplace +=regroupSpeed;
+ 
+      if (mutualDisplace>maxZDisplace) 
+      {
+        _animatingRegroup = false;
+        mutualDisplace = maxZDisplace;
+      }
+    }
+  }
 }
 
-void FramesCicleCheck() {
-  frameCntr++;
-  if (frameCntr>= gravitySquaresFramesDuration) {
-    // println("ENDCICLE");
-    frameCntr = 0;
-  }
-} 
 // Called every time a new frame is available to read
 void movieEvent(Movie m) {
   m.read();
@@ -142,8 +172,8 @@ void ReadCameraColors() {
   }
   currentColors =  cam.pixels;
 }
-void InitializeWebCamParams() {
-
+void InitializeWebCamParams() 
+{
   ResetInputSizes();
   currentColors =  cam.pixels;
   _switchToCam = true;
@@ -154,8 +184,8 @@ void InitializeWebCamParams() {
 
   println("InitializeWebCamParams  " + cellsize);
 }
-void InitializeVideoInputParams() {
-
+void InitializeVideoInputParams() 
+{
   ResetInputSizes();
   _switchToCam = false;
   cellsize = videoCellSize;
@@ -163,18 +193,27 @@ void InitializeVideoInputParams() {
 
   println("InitializeVideoInputParams  " + cellsize);
 }
-void ResetInputSizes() {
+
+void InitializeMusic()
+{
+  minim = new Minim(this);
+  song = minim.loadFile(songName, 2048);
+  fft = new FFT(song.bufferSize(), song.sampleRate());
+  fft.linAverages(512);
+}
+void ResetInputSizes() 
+{
   videoSize = null;
   cameraSize = null;
 }
-void GetInputRowsColumns() {
-
+void GetInputRowsColumns() 
+{
   columns = currentInputWidth / cellsize;  // Calculate # of columns
   rows = currentInputHeight / cellsize;  // Calculate # of rows
 }
 
-void FillGravitySquares() {
-
+void FillGravitySquares() 
+{
   int totalInputShapes = rows*columns;
   gravitySquares  = null;
   gravitySquares = new GravitySquare[totalInputShapes];
@@ -194,13 +233,23 @@ void keyPressed() {
     myMovie.stop();
     InitializeWebCamParams();
   }
-  if (key == 'a') {
-
-    myMovie.play();
+  if (key == 'a') 
+  {
     InitializeVideoInputParams();
+    myMovie.play();
   }
   if (key == 'b') {
-    // song.rewind();
-    //song.play();
+    song.rewind();
+    song.play();
+  }
+  if (key == 'r') 
+  {
+    _groupPixels = true;
+    _animatingRegroup = true;
+  }
+  if (key == 't') 
+  {
+    _groupPixels = false;
+    _animatingRegroup = true;
   }
 }
